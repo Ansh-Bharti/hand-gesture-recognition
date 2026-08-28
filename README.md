@@ -4,14 +4,15 @@ A browser-based Streamlit application that uses a laptop webcam to detect hand
 gestures in real time and notifies an external webhook when a gesture is
 confirmed.
 
-> **Project status — Phase 4 (gesture classification).**
-> The rule-based classifier is implemented and unit-tested: it turns 21 hand
-> landmarks into one of six gesture labels (or "unrecognised") using plain
-> geometry — no trained model. It is **not wired into the live UI yet**; that
-> happens in Phase 5 together with the debounce state machine. `state` and
-> `webhook` are still stubs (see [Roadmap](#roadmap)). The running decision log
-> in [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why* each
-> choice was made.
+> **Project status — Phase 5 (debounce + live gesture readout).**
+> The classifier is now wired into the live feed through a `GestureStateMachine`
+> (`gesture/state.py`): a pose must hold steady for N frames (default 8) before
+> it "confirms", and each confirmed gesture fires exactly one event — holding it
+> does not repeat. The current gesture name is drawn on the video and shown in a
+> live "Detection Status" panel. `webhook` is still a stub; confirmed events are
+> only logged for now (see [Roadmap](#roadmap)). The running decision log in
+> [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why* each choice
+> was made.
 
 ## Overview
 
@@ -222,8 +223,8 @@ state machine, and the webhook dispatch model.
 | 1 | Project scaffold, deps, test harness, config, decision log | ✅ done |
 | 2 | Webcam interface (`streamlit-webrtc`) | ✅ done |
 | 3 | Hand landmark detection (MediaPipe) | ✅ done |
-| 4 | Rule-based gesture classification | ✅ done (not yet shown in UI) |
-| 5 | Debounce / event state machine | stub |
+| 4 | Rule-based gesture classification | ✅ done |
+| 5 | Debounce / event state machine | ✅ done |
 | 6 | Webhook integration + URL validation | stub |
 | 7 | Error handling, logging, config audit | pending |
 | 8 | Automated test suite | pending |

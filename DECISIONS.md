@@ -145,3 +145,24 @@ None of substance — this is a correctness/honesty decision, not a capability t
 
 ### Date
 2026-08-28
+
+---
+
+## DEC-008 — Debounce Strategy: Unified State Machine, "No Hand" as a Valid State
+
+### Decision
+Implement gesture debounce as a single `GestureStateMachine` (`gesture/state.py`) that requires N consecutive matching classifier outputs to "confirm" a state change, where `None` (no hand / unrecognized pose) is treated as just another candidate value rather than a special case.
+
+### Alternatives Considered
+- Separate boolean flags/counters scattered across the frame callback ("already_fired", "frames_since_change", etc.)
+- A dedicated state machine class, with `None` handled as an ordinary candidate value
+- A dedicated state machine class, with `None` handled as a special "reset now" signal (immediate reset on any no-hand frame, no debounce on the reset path)
+
+### Reason
+Treating `None` identically to every other gesture label means one mechanism produces all the required behaviors: holding a gesture emits exactly one event, switching to a new gesture (or to "no gesture") requires the same N-frame confirmation as any other transition (so a single dropped frame of detection doesn't spuriously reset the whole hold), and the same gesture reappearing after the hand was confirmed absent for N frames is free to fire again. Scattering ad-hoc counters directly in the video callback (the initial mental draft) was rejected because the debounce logic would not be unit-testable independently of MediaPipe/Streamlit, and the assignment explicitly calls for "a clean state machine or dedicated component."
+
+### Trade-off
+Requiring N consecutive `None` frames before resetting (rather than resetting instantly) means there is a small, deliberate lag between the hand actually leaving the frame and the UI/webhook treating the gesture as "gone." At the default `GESTURE_CONFIRM_FRAMES=8` and a typical 20-30fps stream, that's roughly a quarter-to-a-third of a second — judged an acceptable trade for not being oversensitive to single-frame detection dropouts.
+
+### Date
+2026-08-28
