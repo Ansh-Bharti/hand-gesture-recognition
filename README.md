@@ -4,13 +4,13 @@ A browser-based Streamlit application that uses a laptop webcam to detect hand
 gestures in real time and notifies an external webhook when a gesture is
 confirmed.
 
-> **Project status — Phase 2 (webcam interface).**
-> The live browser webcam feed now works: `streamlit run app.py` shows the
-> camera in the page with a START/STOP control and a mirrored video preview.
-> The gesture modules (`detector`, `classifier`, `state`, `webhook`) are still
-> stubs; each is implemented in a later phase (see [Roadmap](#roadmap)). The
-> running decision log in [`DECISIONS.md`](DECISIONS.md) is the source of truth
-> for *why* each choice was made.
+> **Project status — Phase 3 (hand landmark detection).**
+> The webcam feed now runs a live hand detector: MediaPipe finds one hand per
+> frame and the 21-point hand skeleton is drawn on the video. `classifier`,
+> `state`, and `webhook` are still stubs; each is implemented in a later phase
+> (see [Roadmap](#roadmap)). The running decision log in
+> [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why* each choice
+> was made.
 
 ## Overview
 
@@ -220,7 +220,7 @@ state machine, and the webhook dispatch model.
 | --- | --- | --- |
 | 1 | Project scaffold, deps, test harness, config, decision log | ✅ done |
 | 2 | Webcam interface (`streamlit-webrtc`) | ✅ done |
-| 3 | Hand landmark detection (MediaPipe) | stub |
+| 3 | Hand landmark detection (MediaPipe) | ✅ done |
 | 4 | Rule-based gesture classification | stub |
 | 5 | Debounce / event state machine | stub |
 | 6 | Webhook integration + URL validation | stub |

@@ -83,3 +83,24 @@ The model file is not bundled in the pip package, so the app needs a one-time ne
 
 ### Date
 2026-08-27
+
+---
+
+## DEC-005 — Detector Lifecycle: Module Singleton vs. `st.cache_resource`
+
+### Decision
+Build the `HandDetector` once and keep it in a plain module-level singleton in `app.py` (`get_detector()`), guarded by a `threading.Lock`, with an explicit "init failed" flag. Do not use Streamlit's `st.cache_resource`.
+
+### Alternatives Considered
+- Construct a new `HandDetector` inside `_on_frame` every frame
+- `@st.cache_resource` on a `get_detector()` factory
+- Module-level singleton with an explicit failure flag (chosen)
+
+### Reason
+Streamlit re-runs the whole script on every UI interaction and the video callback fires ~30 times a second, so the detector must be created once and reused. Both a singleton and `st.cache_resource` achieve that; the deciding factor is failure handling. `st.cache_resource` does not cache exceptions, so if the model load fails (e.g. no network on first run) every call retries the full download — at ~30 calls/second. The module singleton records the failure once, then returns `None` immediately on every later call, and the app surfaces one clear error at startup. The lock guards only the construction path, not the fast-path reads.
+
+### Trade-off
+Slightly more code than a one-line decorator, and thread-safety is now our responsibility because the video callback runs on a different thread from the main Streamlit script.
+
+### Date
+2026-08-28

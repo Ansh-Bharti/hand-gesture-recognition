@@ -8,10 +8,13 @@ this approach was chosen over cv2.VideoCapture(0) or st.camera_input.
 """
 
 import logging
+import threading
 
 import av
 import streamlit as st
 from streamlit_webrtc import RTCConfiguration, WebRtcMode, webrtc_streamer
+
+from gesture.detector import HandDetector, ModelUnavailableError, draw_landmarks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +25,44 @@ logger = logging.getLogger("gesture_app")
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
+
+_detector_instance: HandDetector | None = None
+_detector_init_failed = False
+_detector_lock = threading.Lock()
+
+
+def get_detector() -> HandDetector | None:
+    """Build the HandDetector once per process and reuse it on every call.
+
+    Streamlit re-executes this script top-to-bottom on every UI interaction
+    (e.g. typing in the webhook field), and the video callback fires ~30
+    times per second — so the detector is memoized in a plain module-level
+    singleton rather than reconstructed per call. A simple st.cache_resource
+    decorator was considered but rejected: it does not cache exceptions, so
+    a persistent model-download failure would retry a full network fetch on
+    every single video frame. Here, a failed load is remembered and returns
+    None immediately on every subsequent call instead of retrying.
+    """
+    global _detector_instance, _detector_init_failed
+
+    if _detector_instance is not None:
+        return _detector_instance
+    if _detector_init_failed:
+        return None
+
+    with _detector_lock:
+        if _detector_instance is not None:
+            return _detector_instance
+        if _detector_init_failed:
+            return None
+        try:
+            _detector_instance = HandDetector()
+        except ModelUnavailableError:
+            logger.exception("Hand detector unavailable; disabling hand detection")
+            _detector_init_failed = True
+            return None
+
+    return _detector_instance
 
 
 def _on_frame(frame: av.VideoFrame) -> av.VideoFrame:
@@ -35,6 +76,13 @@ def _on_frame(frame: av.VideoFrame) -> av.VideoFrame:
     try:
         img = frame.to_ndarray(format="bgr24")
         img = img[:, ::-1, :]  # mirror, so the feed matches the user's motion
+
+        detector = get_detector()
+        if detector is not None:
+            detection = detector.detect(img)
+            if detection.hand_present:
+                img = draw_landmarks(img, detection.landmarks)
+
         return av.VideoFrame.from_ndarray(img, format="bgr24")
     except Exception:
         logger.exception("Unexpected error while processing a video frame")
@@ -44,6 +92,15 @@ def _on_frame(frame: av.VideoFrame) -> av.VideoFrame:
 def main() -> None:
     st.set_page_config(page_title="Hand Gesture Detector", page_icon=":wave:", layout="wide")
     st.title("Real-Time Hand Gesture Detector")
+
+    with st.spinner("Loading hand detection model..."):
+        detector_ready = get_detector() is not None
+    if not detector_ready:
+        st.error(
+            "Hand detection model could not be loaded (likely no network "
+            "access on first run). The webcam feed will still work, but "
+            "gestures cannot be detected until this is resolved."
+        )
 
     video_col, info_col = st.columns([2, 1])
 
