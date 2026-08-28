@@ -104,3 +104,44 @@ Slightly more code than a one-line decorator, and thread-safety is now our respo
 
 ### Date
 2026-08-28
+
+---
+
+## DEC-006 — Gesture Classification Strategy
+
+### Decision
+Classify gestures with deterministic, rule-based geometry over the 21 landmarks (finger-extension angles, thumb/pinch distances, a directional check for thumbs-up), instead of training a classifier model.
+
+### Alternatives Considered
+- Rule-based geometry over MediaPipe landmarks
+- A small trained classifier (e.g. an SVM or shallow MLP) on landmark features
+- End-to-end image classification (CNN on raw frames)
+
+### Reason
+The assignment fixes a small, known gesture vocabulary (6 gestures here: Open Palm, Fist, Thumbs Up, Peace, OK Sign, Pointing). For a fixed vocabulary like this, hand-written geometric rules are fully explainable (each gesture maps to a specific, statable condition on finger states), require no training data or labeling effort, and are trivially unit-testable with synthetic landmark coordinates rather than recorded video. A trained classifier would need a labeled dataset the assignment does not provide and would trade explainability for marginal accuracy gains that aren't needed at this vocabulary size.
+
+### Trade-off
+Thresholds (e.g. the 150° extension-angle cutoff, the thumb/pinch distance ratios) are hand-tuned constants rather than learned, so they may need adjustment for unusual hand shapes, camera angles, or lighting that skews MediaPipe's own landmark estimates. This is called out explicitly in the README's Limitations section rather than presented as universally robust.
+
+### Date
+2026-08-28
+
+---
+
+## DEC-007 — No Fabricated Gesture-Classification Confidence
+
+### Decision
+`classify_gesture()` returns a label or `None`; it never returns a numeric confidence score.
+
+### Alternatives Considered
+- Return a synthetic confidence derived from, e.g., how far past the angle threshold a finger's measurement is
+- Return label-only, with hand-*detection* confidence (from MediaPipe) reported separately
+
+### Reason
+The assignment explicitly warns against inventing ML confidence values for a rule-based classifier. There is a real confidence score for hand *detection* (`HandDetectionResult.detection_confidence`, sourced directly from MediaPipe's handedness classification), and the two are kept clearly distinct so the UI and webhook payload never imply a model-derived certainty that doesn't exist for the gesture label itself.
+
+### Trade-off
+None of substance — this is a correctness/honesty decision, not a capability trade-off.
+
+### Date
+2026-08-28
