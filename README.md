@@ -4,14 +4,14 @@ A browser-based Streamlit application that uses a laptop webcam to detect hand
 gestures in real time and notifies an external webhook when a gesture is
 confirmed.
 
-> **Project status — Phase 8 (test-suite consolidation).**
-> Adds `tests/test_app_pipeline.py`: integration tests that call `_on_frame`
-> directly with a fake frame and a fake detector, proving detector → classifier
-> → debounce → webhook-dispatch decision are wired together correctly in
-> `app.py` — no real camera, model, or network anywhere. **65 tests pass.** No
-> production code changed this phase. The running decision log in
-> [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why* each choice
-> was made.
+> **Project status — Phase 9 (Docker).**
+> The app now builds and runs as a container: `docker build -t
+> hand-gesture-detector .` then `docker run --rm -p 8501:8501
+> hand-gesture-detector`, open <http://localhost:8501>. `python:3.10-slim` base
+> with the OS libs MediaPipe/OpenCV need, dependency-layer caching, the model
+> pre-fetched at build time (no network needed at run time), and a Streamlit
+> healthcheck. See [Docker Setup](#docker-setup) and `DECISIONS.md` DEC-012. 65
+> tests pass; feature code unchanged since Phase 8.
 
 ## Overview
 
@@ -128,17 +128,33 @@ pytest
 
 ## Docker Setup
 
-_Placeholder until the Docker phase._ The intended usage:
-
 ```bash
 docker build -t hand-gesture-detector .
 docker run --rm -p 8501:8501 hand-gesture-detector
 ```
 
-The webcam is captured in the browser, **not** read from a device inside the
-container, so no `--device /dev/video0` mapping is needed (see
-[`DECISIONS.md`](DECISIONS.md) DEC-002). The model file is fetched at image
-build time so the container needs no network access at run time.
+Then open <http://localhost:8501>.
+
+Details:
+
+- Base image `python:3.10-slim`. The `Dockerfile` installs the OS libraries
+  MediaPipe/OpenCV need at runtime (`libgl1`, `libglib2.0-0`, …) — the slim
+  image doesn't ship them, and without them `import cv2` fails at container
+  start.
+- `requirements.txt` is copied and installed **before** the rest of the source,
+  so editing code doesn't re-run the slow `pip install`.
+- The MediaPipe model is downloaded **at build time**
+  (`ensure_model_downloaded()`), so the running container needs no outbound
+  network. `models/` is in `.dockerignore` so the host's copy is never sent
+  into the build.
+- A `HEALTHCHECK` polls Streamlit's `/_stcore/health`.
+- The webcam is captured **in the browser**, not read from a device inside the
+  container, so there is no `--device /dev/video0` mapping (see
+  [`DECISIONS.md`](DECISIONS.md) DEC-002 and DEC-012). Because browsers only
+  grant camera access on `localhost` or HTTPS, a remote container deployment
+  needs a TLS terminator in front of it.
+- Config: pass env vars with `-e`, e.g.
+  `docker run --rm -p 8501:8501 -e GESTURE_CONFIRM_FRAMES=5 hand-gesture-detector`.
 
 ## Webhook Configuration
 
@@ -227,4 +243,4 @@ state machine, and the webhook dispatch model.
 | 6 | Webhook integration + URL validation | ✅ done |
 | 7 | Error handling, logging, config audit | ✅ done |
 | 8 | Automated test suite | ✅ done (65 tests) |
-| 9 | Docker packaging | placeholder |
+| 9 | Docker packaging | ✅ done |

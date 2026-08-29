@@ -8,3 +8,8 @@ tests/
 .env
 README.md
 DECISIONS.md
+
+# Downloaded model asset: fetched fresh at build time instead (see
+# Dockerfile), so the image doesn't depend on whatever happens to be
+# cached on the host machine.
+models/

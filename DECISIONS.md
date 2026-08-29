@@ -229,3 +229,26 @@ Reading configuration once at import time (rather than per-call) means a `.env` 
 
 ### Date
 2026-08-28
+
+---
+
+## DEC-012 — Docker Image: Single-Stage `python:3.10-slim` with Build-Time Model Pre-fetch
+
+### Decision
+Package the app as a single-stage Docker image from `python:3.10-slim`: install the OS libraries MediaPipe/OpenCV need, `pip install -r requirements.txt` as its own layer before copying the source, run `ensure_model_downloaded()` at build time, expose 8501, add a Streamlit healthcheck, and start via a `streamlit run` ENTRYPOINT.
+
+### Alternatives Considered
+- Single-stage `python:3.10-slim` (chosen)
+- `python:3.10` (full Debian image, no need to add system libs by hand)
+- A multi-stage build (build deps in one stage, copy artefacts to a slim runtime stage)
+- Download the model on first container start instead of at build time
+- Map the host webcam into the container (`--device /dev/video0`)
+
+### Reason
+`python:3.10` would avoid listing `libgl1`/`libglib2.0-0`/etc. by hand but adds ~600 MB of image for tooling the runtime never uses; `-slim` plus an explicit, documented `apt-get` line is smaller and states exactly what the app depends on. A multi-stage build gives little here — the heavy layer is `pip install mediapipe`, whose wheels are needed at runtime too, so there is nothing to leave behind in a builder stage. Copying `requirements.txt` and installing before `COPY . .` means a code edit doesn't re-run the slow dependency install (Docker layer caching). Pre-fetching the model at build time (`ensure_model_downloaded()`) makes the image self-contained: the container needs no outbound network on first run, which matters for offline or locked-down deployments. The webcam is **not** mapped in, because capture happens in the browser via WebRTC (DEC-002) — a `/dev/video0` inside the container would be the wrong device or absent, and would break the "same code path locally and containerised" property.
+
+### Trade-off
+The image carries the ~7.8 MB model and a full CPython + MediaPipe/OpenCV stack (hundreds of MB); acceptable for a CV app. The `apt-get` package list is a manual dependency that must be kept in step with what MediaPipe needs across versions. Browser camera access still requires the page be served over `localhost` or HTTPS, so a remote container deployment needs a TLS terminator in front — noted in the README.
+
+### Date
+2026-08-29
