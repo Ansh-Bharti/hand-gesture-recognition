@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
+from services import webhook as webhook_module
 from services.webhook import send_webhook, send_webhook_async
 from utils.validation import is_valid_webhook_url, validate_webhook_url
 
@@ -170,3 +171,26 @@ def test_send_webhook_async_swallows_callback_exceptions():
         )
         assert done.wait(timeout=2)
     # No exception should propagate out of the background thread to the test.
+
+
+# --- WEBHOOK_TIMEOUT_SECONDS environment parsing --------------------------
+
+
+def test_read_timeout_uses_default_when_unset(monkeypatch):
+    monkeypatch.delenv("WEBHOOK_TIMEOUT_SECONDS", raising=False)
+    assert webhook_module._read_timeout_from_env(default=5.0) == 5.0
+
+
+def test_read_timeout_parses_valid_value(monkeypatch):
+    monkeypatch.setenv("WEBHOOK_TIMEOUT_SECONDS", "10")
+    assert webhook_module._read_timeout_from_env(default=5.0) == 10.0
+
+
+def test_read_timeout_falls_back_on_garbage(monkeypatch):
+    monkeypatch.setenv("WEBHOOK_TIMEOUT_SECONDS", "abc")
+    assert webhook_module._read_timeout_from_env(default=5.0) == 5.0
+
+
+def test_read_timeout_falls_back_on_non_positive(monkeypatch):
+    monkeypatch.setenv("WEBHOOK_TIMEOUT_SECONDS", "-1")
+    assert webhook_module._read_timeout_from_env(default=5.0) == 5.0

@@ -22,7 +22,32 @@ from utils.validation import validate_webhook_url
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_SECONDS = float(os.getenv("WEBHOOK_TIMEOUT_SECONDS", "5"))
+
+def _read_timeout_from_env(default: float = 5.0) -> float:
+    """Read WEBHOOK_TIMEOUT_SECONDS from the environment, tolerating bad input.
+
+    This value comes from user-editable configuration (.env), so a typo or
+    invalid value must degrade to a safe default with a logged warning,
+    not crash the whole application at import time.
+    """
+    raw = os.getenv("WEBHOOK_TIMEOUT_SECONDS")
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+        if value <= 0:
+            raise ValueError("must be > 0")
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid WEBHOOK_TIMEOUT_SECONDS=%r in environment; using default of %s",
+            raw,
+            default,
+        )
+        return default
+
+
+DEFAULT_TIMEOUT_SECONDS = _read_timeout_from_env()
 
 
 @dataclass(frozen=True)

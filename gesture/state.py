@@ -12,13 +12,41 @@ unit-tested as plain Python (see tests/test_state.py).
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-DEFAULT_CONFIRM_FRAMES = int(os.getenv("GESTURE_CONFIRM_FRAMES", "8"))
+logger = logging.getLogger(__name__)
+
+
+def _read_confirm_frames_from_env(default: int = 8) -> int:
+    """Read GESTURE_CONFIRM_FRAMES from the environment, tolerating bad input.
+
+    This value comes from user-editable configuration (.env), so a typo or
+    invalid value must degrade to a safe default with a logged warning,
+    not crash the whole application at import time.
+    """
+    raw = os.getenv("GESTURE_CONFIRM_FRAMES")
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+        if value < 1:
+            raise ValueError("must be >= 1")
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid GESTURE_CONFIRM_FRAMES=%r in environment; using default of %d",
+            raw,
+            default,
+        )
+        return default
+
+
+DEFAULT_CONFIRM_FRAMES = _read_confirm_frames_from_env()
 
 
 @dataclass(frozen=True)

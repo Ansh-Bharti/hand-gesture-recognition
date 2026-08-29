@@ -2,6 +2,7 @@
 
 import pytest
 
+from gesture import state as state_module
 from gesture.state import GestureEvent, GestureStateMachine
 
 
@@ -97,3 +98,26 @@ def test_reset_clears_all_state():
 def test_rejects_invalid_confirm_frames():
     with pytest.raises(ValueError):
         GestureStateMachine(confirm_frames=0)
+
+
+# --- GESTURE_CONFIRM_FRAMES environment parsing --------------------------
+
+
+def test_read_confirm_frames_uses_default_when_unset(monkeypatch):
+    monkeypatch.delenv("GESTURE_CONFIRM_FRAMES", raising=False)
+    assert state_module._read_confirm_frames_from_env(default=8) == 8
+
+
+def test_read_confirm_frames_parses_valid_value(monkeypatch):
+    monkeypatch.setenv("GESTURE_CONFIRM_FRAMES", "12")
+    assert state_module._read_confirm_frames_from_env(default=8) == 12
+
+
+def test_read_confirm_frames_falls_back_on_garbage(monkeypatch):
+    monkeypatch.setenv("GESTURE_CONFIRM_FRAMES", "not-a-number")
+    assert state_module._read_confirm_frames_from_env(default=8) == 8
+
+
+def test_read_confirm_frames_falls_back_on_non_positive(monkeypatch):
+    monkeypatch.setenv("GESTURE_CONFIRM_FRAMES", "0")
+    assert state_module._read_confirm_frames_from_env(default=8) == 8

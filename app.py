@@ -8,8 +8,18 @@ this approach was chosen over cv2.VideoCapture(0) or st.camera_input.
 """
 
 import logging
+import os
 import threading
 import time
+
+# Loaded before any project module: gesture/state.py and services/webhook.py
+# read GESTURE_CONFIRM_FRAMES / WEBHOOK_TIMEOUT_SECONDS from the environment
+# at import time, so .env must be applied to os.environ first or those
+# values would silently fall back to their defaults even when a real .env
+# file is present.
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import av
 import cv2
@@ -23,8 +33,18 @@ from gesture.state import GestureStateMachine
 from services.webhook import WebhookResult, send_webhook_async
 from utils.validation import validate_webhook_url
 
+
+def _resolve_log_level(default: str = "INFO") -> int:
+    raw = os.getenv("LOG_LEVEL", default).upper()
+    level = getattr(logging, raw, None)
+    if not isinstance(level, int):
+        logging.warning("Invalid LOG_LEVEL=%r in environment; using %s", raw, default)
+        return getattr(logging, default)
+    return level
+
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=_resolve_log_level(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("gesture_app")
@@ -145,6 +165,14 @@ def get_detector() -> HandDetector | None:
             logger.exception("Hand detector unavailable; disabling hand detection")
             _detector_init_failed = True
             return None
+        except Exception:
+            # Anything else (e.g. a corrupted cached model file, an
+            # unexpected MediaPipe initialization error) is still a
+            # detector-unavailable condition from the app's point of view,
+            # not a reason to crash the whole page on first load.
+            logger.exception("Unexpected error initializing the hand detector; disabling hand detection")
+            _detector_init_failed = True
+            return None
 
     return _detector_instance
 
@@ -234,6 +262,7 @@ def _render_status(container, ctx) -> None:
         )
         return
 
+    logger.info("Camera stream started")
     while ctx.state.playing:
         hand_present, confidence = _live_status.snapshot()
         confirmed = _gesture_state.confirmed_gesture
@@ -269,8 +298,11 @@ def _render_status(container, ctx) -> None:
 
         time.sleep(_STATUS_POLL_INTERVAL_SECONDS)
 
+    logger.info("Camera stream stopped")
+
 
 def main() -> None:
+    logger.info("Application starting")
     st.set_page_config(page_title="Hand Gesture Detector", page_icon=":wave:", layout="wide")
     st.title("Real-Time Hand Gesture Detector")
 

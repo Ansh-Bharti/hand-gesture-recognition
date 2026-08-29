@@ -4,15 +4,16 @@ A browser-based Streamlit application that uses a laptop webcam to detect hand
 gestures in real time and notifies an external webhook when a gesture is
 confirmed.
 
-> **Project status — Phase 6 (webhook integration).**
-> Each confirmed gesture now fires a JSON `POST` to a user-supplied webhook URL:
-> `{"event": "gesture_detected", "gesture": "...", "timestamp": "..."}`. The URL
-> is validated in the UI as you type; the request goes out on a background
-> daemon thread (fire-and-forget) so a slow endpoint never stalls the video;
-> success/failure is shown in the status panel and logged (host only, never the
-> full URL). All 48 tests pass. The running decision log in
-> [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why* each choice
-> was made.
+> **Project status — Phase 7 (error handling, logging, config).**
+> Hardening pass, no new features. `.env` loading is now actually wired in
+> (`load_dotenv()` at the top of `app.py`, before the modules that read env vars
+> at import time); `GESTURE_CONFIRM_FRAMES`, `WEBHOOK_TIMEOUT_SECONDS`, and
+> `LOG_LEVEL` fall back to safe defaults with a logged warning instead of
+> crashing on a bad value; detector startup catches any unexpected error, not
+> just the known one; lifecycle log lines added. New `tests/test_app_smoke.py`
+> runs the whole app headlessly via Streamlit's `AppTest`. 60 tests pass. The
+> running decision log in [`DECISIONS.md`](DECISIONS.md) is the source of truth
+> for *why* each choice was made.
 
 ## Overview
 
@@ -226,6 +227,6 @@ state machine, and the webhook dispatch model.
 | 4 | Rule-based gesture classification | ✅ done |
 | 5 | Debounce / event state machine | ✅ done |
 | 6 | Webhook integration + URL validation | ✅ done |
-| 7 | Error handling, logging, config audit | pending |
+| 7 | Error handling, logging, config audit | ✅ done |
 | 8 | Automated test suite | pending |
 | 9 | Docker packaging | placeholder |

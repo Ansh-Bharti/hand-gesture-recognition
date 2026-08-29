@@ -208,3 +208,24 @@ If this app were ever exposed as a multi-tenant service, this validation would b
 
 ### Date
 2026-08-28
+
+---
+
+## DEC-011 — Configuration Loading Order and Env-Var Validation
+
+### Decision
+Call `load_dotenv()` at the very top of `app.py`, before importing `gesture.state` or `services.webhook` (both of which read env vars at module-import time), and validate every env-derived config value at read time with a safe fallback + logged warning instead of letting a parse error crash at import.
+
+### Alternatives Considered
+- Call `load_dotenv()` wherever convenient in `app.py`
+- Read env vars lazily (inside functions) instead of at module import time
+- Read env vars at import time with a fallback, called before other imports (chosen)
+
+### Reason
+Caught during a deliberate Phase 7 audit, not by accident: `python-dotenv` was listed in `requirements.txt` and documented in `.env.example` since Phase 1, but `load_dotenv()` was never actually called anywhere — a real `.env` file would have had zero effect. Fixing the call alone was not sufficient: `gesture/state.py` and `services/webhook.py` compute their default constants (`DEFAULT_CONFIRM_FRAMES`, `DEFAULT_TIMEOUT_SECONDS`) once, at module-import time, so `load_dotenv()` must run *before* those modules are imported, or the values would already have been read (and missed) by the time `.env` was applied. Separately, a malformed value (e.g. `GESTURE_CONFIRM_FRAMES=abc`) previously crashed at import with an unhandled `ValueError` — a corrupted single config field taking down the whole app on startup is a worse failure mode than falling back to the built-in default with a logged warning.
+
+### Trade-off
+Reading configuration once at import time (rather than per-call) means a `.env` change requires restarting the app to take effect — acceptable for a local single-user tool where restart is cheap and expected.
+
+### Date
+2026-08-28
