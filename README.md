@@ -4,14 +4,11 @@ A browser-based Streamlit application that uses a laptop webcam to detect hand
 gestures in real time and notifies an external webhook when a gesture is
 confirmed.
 
-> **Project status — Phase 9 (Docker).**
-> The app now builds and runs as a container: `docker build -t
-> hand-gesture-detector .` then `docker run --rm -p 8501:8501
-> hand-gesture-detector`, open <http://localhost:8501>. `python:3.10-slim` base
-> with the OS libs MediaPipe/OpenCV need, dependency-layer caching, the model
-> pre-fetched at build time (no network needed at run time), and a Streamlit
-> healthcheck. See [Docker Setup](#docker-setup) and `DECISIONS.md` DEC-012. 65
-> tests pass; feature code unchanged since Phase 8.
+> **Status: complete.** All core functional requirements are implemented and
+> covered by 65 automated tests. The app runs locally (`streamlit run app.py`)
+> and as a Docker container. It was built in numbered phases with an entry in
+> [`DECISIONS.md`](DECISIONS.md) for every significant choice; the
+> [Development History](#development-history) table maps phases to commits.
 
 ## Overview
 
@@ -55,14 +52,15 @@ browser webcam ──WebRTC──▶ _on_frame() callback (worker thread)
 | `gesture/state.py` | Debounce / event-confirmation state machine |
 | `services/webhook.py` | Webhook payload build + async dispatch + error handling |
 | `utils/validation.py` | Webhook URL validation |
-| `tests/` | `pytest` suite for the classifier, state machine, and webhook layers |
+| `tests/` | 65 `pytest` tests — unit (`test_classifier`, `test_state`, `test_webhook`, `test_detector`, `test_frame_processing`) and integration (`test_app_smoke` renders the page headlessly, `test_app_pipeline` drives `_on_frame` end to end) |
 
 Each non-UI module is deliberately decoupled from Streamlit and MediaPipe so it
-can be tested as plain Python.
+can be tested as plain Python — no camera, model, or network needed in the test
+suite.
 
 ## Supported Gestures
 
-The target gesture vocabulary (implemented in Phase 4):
+Six gestures, recognised from landmark geometry alone (no trained model):
 
 | Gesture | Rule (informal) |
 | --- | --- |
@@ -194,53 +192,124 @@ trade-offs. In brief:
 
 | ID | Decision |
 | --- | --- |
-| DEC-001 | Target Python 3.10 |
-| DEC-002 | Browser-side WebRTC capture (`streamlit-webrtc`), not `cv2.VideoCapture` |
-| DEC-003 | MediaPipe Hands for 21-point landmarks (no custom/trained detector) |
-| DEC-004 | MediaPipe **Tasks API** `HandLandmarker` in `IMAGE` mode |
-
-Later phases add decisions on the detector lifecycle, rule-based
-classification, not fabricating a classifier confidence score, the debounce
-state machine, and the webhook dispatch model.
+| DEC-001 | Target Python 3.10 (dependency wheel availability) |
+| DEC-002 | Browser-side WebRTC capture (`streamlit-webrtc`), not `cv2.VideoCapture` or `st.camera_input` |
+| DEC-003 | MediaPipe Hands for 21-point landmarks — no custom/trained detector |
+| DEC-004 | MediaPipe **Tasks API** `HandLandmarker` in `IMAGE` mode; model asset fetched, not bundled |
+| DEC-005 | Detector as a module singleton with a lock + failure flag, not `st.cache_resource` |
+| DEC-006 | Rule-based geometric classification, not a trained classifier |
+| DEC-007 | `classify_gesture()` returns a label or `None` — never a fabricated confidence score |
+| DEC-008 | One `GestureStateMachine` for debounce; `None` (no hand) treated as an ordinary candidate value |
+| DEC-009 | Webhook dispatched on a background daemon thread — not async, not a task queue |
+| DEC-010 | Webhook URL validation is syntactic only — no SSRF/private-range blocking (single-user local tool) |
+| DEC-011 | `load_dotenv()` before the modules that read env vars; bad config values fall back with a warning, never crash |
+| DEC-012 | Single-stage `python:3.10-slim` image; model pre-fetched at build time; no webcam device mapping |
 
 ## Assumptions
 
-- One hand in frame at a time (`num_hands=1`).
-- A single local operator — one webcam, one browser session. State is a
-  process-level singleton, not per-session.
-- Pointing the webhook at `localhost` is a legitimate use case; no SSRF-style
-  blocking of private/loopback addresses is applied.
+- **One hand in frame at a time** (`num_hands=1`).
+- **A single local operator** — one webcam, one browser session. Shared state is
+  a process-level singleton, not per-session; the app is not designed for
+  concurrent users.
+- **A Chromium-based browser or Firefox**, served over `localhost` or HTTPS —
+  browsers only grant camera access in a secure context.
+- **Outbound network on first run** to fetch the ~7.8 MB MediaPipe model (or the
+  Docker image, which bakes it in at build time). No network needed afterward.
+- Pointing the webhook at `localhost` / a LAN address is a legitimate use case,
+  so no SSRF-style blocking of private/loopback addresses is applied (DEC-010).
 
 ## Limitations
 
-- Gesture thresholds are hand-tuned constants; unusual hand shapes, camera
-  angles, or lighting that skews MediaPipe's landmark estimates may need them
-  adjusted.
-- No confidence score for the gesture label itself — classification is boolean
-  geometry. MediaPipe's hand-*detection* confidence is a separate, real value.
-- Webhook delivery has no retry or queue; a down endpoint means that one event
-  is reported as failed and dropped.
-- There is a small deliberate lag (≈ `GESTURE_CONFIRM_FRAMES` frames) between a
-  hand leaving the frame and the gesture being treated as cleared.
+- **Thresholds are hand-tuned constants** (extension angle 150°, pinch and
+  thumb-distance ratios). Unusual hand shapes, steep camera angles, or lighting that skews
+  MediaPipe's landmark estimates may misclassify or fall through to
+  "unrecognized"; the constants are named at the top of `gesture/classifier.py`
+  for tuning.
+- **No confidence score for the gesture label** — classification is boolean
+  geometry, not a model. MediaPipe's hand-*detection* confidence is a separate,
+  real value shown in the status panel (DEC-007).
+- **Webhook delivery has no retry or queue** — a down endpoint means that one
+  event is reported as failed and dropped (DEC-009).
+- **Debounce lag** — there is a deliberate ~`GESTURE_CONFIRM_FRAMES`-frame delay
+  (≈ ⅓ s at 25 fps) between a hand leaving the frame and the gesture being
+  treated as cleared, so a single dropped detection frame doesn't break a hold
+  (DEC-008).
+- **Gesture set is fixed in code** — adding a gesture means adding a rule to
+  `classify_gesture()` and an entry to `SUPPORTED_GESTURES`, not configuration.
+- **The automated tests cannot exercise real WebRTC** (no browser); live camera
+  behaviour is covered by the [manual checklist](#demonstrating--manual-test-checklist).
+- **A remote container deployment needs HTTPS** in front of it for the browser
+  to allow the camera; plain `http://<server-ip>:8501` will not get camera
+  permission.
 
 ## Future Improvements
 
 - Webhook retry with backoff and a small delivery queue.
 - Multi-hand support.
-- On-screen debounce progress indicator.
+- On-screen debounce progress indicator (frames-to-confirm meter).
 - Configurable gesture set / thresholds via the UI.
-- CI workflow running the test suite on push.
+- CI workflow running the test suite on every push.
+- HMAC-signed webhook payloads so receivers can verify the sender.
 
-## Roadmap
+## Requirement → Implementation
 
-| Phase | Scope | State in this snapshot |
+| Assignment requirement | Where it's met |
+| --- | --- |
+| Access & process the live webcam feed | `webrtc_streamer` + `_on_frame()` in `app.py` (browser capture, DEC-002) |
+| Display the live feed in the UI | "Webcam Feed" panel; frames returned from `_on_frame()` with a mirror + landmark overlay |
+| Detect gestures in real time | `gesture/detector.py` (MediaPipe, per frame) → `gesture/classifier.py` |
+| Support ≥ 5 gestures | **6** — see [Supported Gestures](#supported-gestures) / `SUPPORTED_GESTURES` |
+| Visually display the detected gesture | Text drawn on the video + "Current Gesture" metric in the status panel |
+| UI input for a webhook URL | `st.text_input` in "Webhook Configuration", with live validation feedback |
+| Send gesture info to the webhook | `services/webhook.py` `send_webhook_async()` — JSON `POST` per confirmed gesture |
+| Handle no hand detected | `HandDetectionResult.hand_present` false → "No hand detected"; state machine treats `None` as a valid state |
+| Handle invalid webhook URL | `utils/validation.py` — checked live in the UI and again before every send |
+| Handle webhook failure | `send_webhook()` never raises; failure returned as `WebhookResult` and shown in the UI + logs |
+| Handle camera access issues | `try/except` around `webrtc_streamer()`; `get_detector()` catches every startup error; `_on_frame()` never raises |
+| Prevent repeated triggering | `gesture/state.py` `GestureStateMachine` — N-frame confirmation, one event per hold (DEC-008) |
+| Python / Streamlit / Git / Docker | Python 3.10; Streamlit UI; phase-by-phase Git history; `Dockerfile` + `.dockerignore` |
+| No hardcoded config / secrets | `.env` + `.env.example` + `load_dotenv()`; env values validated with fallbacks (DEC-011); `.env` git-ignored |
+| Error handling & logging | Covered above + `logging` throughout (lifecycle, warnings, errors) |
+| `.gitignore` excludes generated files / venv / secrets | `.venv/`, `.env`, `__pycache__/`, `*.task` model, `.pytest_cache/` |
+| Docker: same functionality as local | Same code; `ENTRYPOINT` runs the identical `streamlit run app.py` |
+| README covers purpose, local run, Docker, webhook, gestures, limitations | This document |
+
+## Demonstrating / Manual Test Checklist
+
+The automated suite (`pytest`, 65 tests) covers every module and the
+`_on_frame` pipeline without a camera. The items below need a real browser +
+webcam and are the manual acceptance pass:
+
+- [ ] `streamlit run app.py` → page loads at `http://localhost:8501`, model spinner clears
+- [ ] Click **START**, allow the camera → mirrored live video appears, status shows **Camera active**
+- [ ] Hold a hand up → green 21-point skeleton tracks it; status shows **Hand detected (NN% detection confidence)**
+- [ ] Each of the six gestures → its name shows on the video and as **Current Gesture**
+- [ ] An in-between hand shape → **Gesture not recognized**
+- [ ] Move the hand out of frame → **No hand detected**
+- [ ] Hold one gesture steady for several seconds → the terminal logs `Gesture confirmed: <name>` **once**, not repeatedly
+- [ ] Drop the hand, remake the same gesture → it confirms and logs again
+- [ ] Paste a `https://webhook.site` URL → make gestures → each confirmed gesture arrives there as the JSON payload; status shows **Last webhook: Success (HTTP 200)**
+- [ ] Paste `not-a-url` → inline **error** message, no request sent
+- [ ] Paste a valid-looking but dead URL (e.g. `https://127.0.0.1:9/x`) → status shows **Last webhook: Failed (...)**, app keeps running
+- [ ] Deny the camera permission / have no webcam → friendly on-page message, no crash
+- [ ] `docker build -t hand-gesture-detector .` then `docker run --rm -p 8501:8501 hand-gesture-detector` → same behaviour at `http://localhost:8501`; `docker ps` shows `(healthy)` after ~30 s
+
+## Development History
+
+Built in numbered phases, one commit each, with a `DECISIONS.md` entry for
+every significant choice.
+
+| Phase | Scope | Commit |
 | --- | --- | --- |
-| 1 | Project scaffold, deps, test harness, config, decision log | ✅ done |
-| 2 | Webcam interface (`streamlit-webrtc`) | ✅ done |
-| 3 | Hand landmark detection (MediaPipe) | ✅ done |
-| 4 | Rule-based gesture classification | ✅ done |
-| 5 | Debounce / event state machine | ✅ done |
-| 6 | Webhook integration + URL validation | ✅ done |
-| 7 | Error handling, logging, config audit | ✅ done |
-| 8 | Automated test suite | ✅ done (65 tests) |
-| 9 | Docker packaging | ✅ done |
+| 1 | Project scaffold, deps, test harness, config, decision log | `91129e3`, `60615d4` |
+| 2 | Webcam interface (`streamlit-webrtc`) | `4a8ae68` |
+| 3 | Hand landmark detection (MediaPipe) | `a988ad4` |
+| 4 | Rule-based gesture classification (6 gestures) | `a685263` |
+| 5 | Debounce / event state machine + live gesture readout | `50f4c64` |
+| 6 | Webhook integration + URL validation | `ca7a722` |
+| 7 | Error handling, logging, `.env` config audit | `a5d629c` |
+| 8 | Test-suite consolidation (integration tests) | `299f5eb` |
+| 9 | Docker packaging | `429ed4a` |
+| 10 | Documentation finalisation (this pass) | `5e19f5b`+ |
+
+_Commit hashes are from the current history; see `git log` for the authoritative list._
