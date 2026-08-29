@@ -51,6 +51,12 @@ logger = logging.getLogger("gesture_app")
 
 GESTURE_DISPLAY = {g["id"]: f"{g['emoji']} {g['label']}" for g in SUPPORTED_GESTURES}
 
+# cv2.putText uses OpenCV's Hershey fonts, which are ASCII-only: the emoji in
+# GESTURE_DISPLAY render as "??" when drawn onto the video frame. The on-video
+# overlay therefore uses plain text labels; the Streamlit status panels keep
+# GESTURE_DISPLAY, since the browser renders the emoji fine.
+GESTURE_TEXT = {g["id"]: g["label"] for g in SUPPORTED_GESTURES}
+
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
@@ -200,7 +206,7 @@ def _on_frame(frame: av.VideoFrame) -> av.VideoFrame:
             if detection.hand_present:
                 img = draw_landmarks(img, detection.landmarks)
                 raw_gesture = classify_gesture(detection.landmarks)
-                label = GESTURE_DISPLAY.get(raw_gesture, "Gesture not recognized") if raw_gesture else "Gesture not recognized"
+                label = GESTURE_TEXT.get(raw_gesture, "Gesture not recognized") if raw_gesture else "Gesture not recognized"
 
         event = _gesture_state.update(raw_gesture)
         if event is not None:
