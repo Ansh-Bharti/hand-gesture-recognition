@@ -166,3 +166,45 @@ Requiring N consecutive `None` frames before resetting (rather than resetting in
 
 ### Date
 2026-08-28
+
+---
+
+## DEC-009 — Webhook Dispatch: Background Thread, Not Async/Queue
+
+### Decision
+Dispatch each confirmed gesture's webhook POST on a plain daemon `threading.Thread` (`send_webhook_async` in `services/webhook.py`), fire-and-forget, rather than using `asyncio`, a task queue (Celery/RQ), or calling `requests.post` synchronously inline.
+
+### Alternatives Considered
+- Synchronous call inline in the video callback
+- `asyncio` + an async HTTP client (`aiohttp`/`httpx`)
+- A task queue (Celery, RQ) backed by Redis or similar
+- A background thread per event (chosen)
+
+### Reason
+The video callback must return quickly to keep the live feed smooth; blocking it on a network call (up to the configured timeout, default 5s) for a slow or unresponsive webhook endpoint would visibly stall the video. By the time an event reaches the webhook layer it has already been debounced (Phase 5) — one event per confirmed gesture, not one per frame — so the dispatch rate is inherently low (at most a few per second in pathological rapid-gesture-switching use, realistically much less). At that rate, a plain background thread per event has no meaningful resource cost, and is far simpler to write, test, and explain than introducing an async runtime or a message broker into what is otherwise a synchronous Streamlit script. Streamlit itself does not run an asyncio event loop for user script code, so `asyncio` would have needed its own thread anyway.
+
+### Trade-off
+No retry-on-failure and no delivery queue/backpressure: if the endpoint is down, that single event's webhook is simply reported as failed (visible in the UI and logs) and the app moves on. Acceptable for this assignment's scope; documented as a Future Improvement rather than silently assumed away.
+
+### Date
+2026-08-28
+
+---
+
+## DEC-010 — Webhook URL Validation Scope (no SSRF hardening)
+
+### Decision
+`validate_webhook_url()` checks only that the URL is well-formed and uses an `http`/`https` scheme with a host. It deliberately does **not** block private, loopback, or link-local addresses.
+
+### Alternatives Considered
+- Syntactic validation only (chosen)
+- Additionally resolve the host and reject RFC1918 / loopback / metadata IPs (SSRF hardening)
+
+### Reason
+This is a single-user local tool: the person typing the webhook URL is the same person running the app, and pointing it at `http://localhost:9000` or a LAN address is a normal, expected way to test with a local receiver. SSRF protections exist to stop an *untrusted* caller from reaching internal services; there is no untrusted caller here. Adding DNS resolution to validation would also make a cheap synchronous check slow and network-dependent.
+
+### Trade-off
+If this app were ever exposed as a multi-tenant service, this validation would be insufficient and would need address-range blocking added. Called out here and in the README Limitations section rather than left implicit.
+
+### Date
+2026-08-28

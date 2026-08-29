@@ -4,13 +4,13 @@ A browser-based Streamlit application that uses a laptop webcam to detect hand
 gestures in real time and notifies an external webhook when a gesture is
 confirmed.
 
-> **Project status — Phase 5 (debounce + live gesture readout).**
-> The classifier is now wired into the live feed through a `GestureStateMachine`
-> (`gesture/state.py`): a pose must hold steady for N frames (default 8) before
-> it "confirms", and each confirmed gesture fires exactly one event — holding it
-> does not repeat. The current gesture name is drawn on the video and shown in a
-> live "Detection Status" panel. `webhook` is still a stub; confirmed events are
-> only logged for now (see [Roadmap](#roadmap)). The running decision log in
+> **Project status — Phase 6 (webhook integration).**
+> Each confirmed gesture now fires a JSON `POST` to a user-supplied webhook URL:
+> `{"event": "gesture_detected", "gesture": "...", "timestamp": "..."}`. The URL
+> is validated in the UI as you type; the request goes out on a background
+> daemon thread (fire-and-forget) so a slow endpoint never stalls the video;
+> success/failure is shown in the status panel and logged (host only, never the
+> full URL). All 48 tests pass. The running decision log in
 > [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why* each choice
 > was made.
 
@@ -225,7 +225,7 @@ state machine, and the webhook dispatch model.
 | 3 | Hand landmark detection (MediaPipe) | ✅ done |
 | 4 | Rule-based gesture classification | ✅ done |
 | 5 | Debounce / event state machine | ✅ done |
-| 6 | Webhook integration + URL validation | stub |
+| 6 | Webhook integration + URL validation | ✅ done |
 | 7 | Error handling, logging, config audit | pending |
 | 8 | Automated test suite | pending |
 | 9 | Docker packaging | placeholder |

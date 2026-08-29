@@ -20,6 +20,8 @@ from streamlit_webrtc import RTCConfiguration, WebRtcMode, webrtc_streamer
 from gesture.classifier import SUPPORTED_GESTURES, classify_gesture
 from gesture.detector import HandDetector, ModelUnavailableError, draw_landmarks
 from gesture.state import GestureStateMachine
+from services.webhook import WebhookResult, send_webhook_async
+from utils.validation import validate_webhook_url
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +76,43 @@ class _LiveStatus:
 
 
 _live_status = _LiveStatus()
+
+
+class _WebhookConfig:
+    """Thread-safe holder bridging the webhook URL input to the worker thread.
+
+    The URL text input lives in the main Streamlit script thread; the
+    gesture event that needs it fires from the video-processing worker
+    thread. Streamlit's own st.session_state is not a safe cross-thread
+    channel, so the current value is mirrored into this plain,
+    lock-protected object every script rerun and read from there instead.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.url = ""
+        self.last_result: WebhookResult | None = None
+        self.last_gesture: str | None = None
+
+    def set_url(self, url: str) -> None:
+        with self._lock:
+            self.url = url
+
+    def get_url(self) -> str:
+        with self._lock:
+            return self.url
+
+    def record_result(self, gesture: str, result: WebhookResult) -> None:
+        with self._lock:
+            self.last_gesture = gesture
+            self.last_result = result
+
+    def snapshot(self) -> tuple[str, str | None, WebhookResult | None]:
+        with self._lock:
+            return self.url, self.last_gesture, self.last_result
+
+
+_webhook_config = _WebhookConfig()
 
 
 def get_detector() -> HandDetector | None:
@@ -138,6 +177,30 @@ def _on_frame(frame: av.VideoFrame) -> av.VideoFrame:
         event = _gesture_state.update(raw_gesture)
         if event is not None:
             logger.info("Gesture confirmed: %s", event.gesture)
+            webhook_url = _webhook_config.get_url()
+            if webhook_url.strip():
+                validation_error = validate_webhook_url(webhook_url)
+                if validation_error:
+                    logger.warning("Webhook not sent for %s: %s", event.gesture, validation_error)
+                    _webhook_config.record_result(
+                        event.gesture,
+                        WebhookResult(
+                            success=False,
+                            status_code=None,
+                            error=validation_error,
+                            sent_at=event.timestamp,
+                        ),
+                    )
+                else:
+                    logger.info("Dispatching webhook for gesture: %s", event.gesture)
+                    send_webhook_async(
+                        webhook_url,
+                        event.gesture,
+                        event.timestamp,
+                        on_result=lambda result, g=event.gesture: _webhook_config.record_result(g, result),
+                    )
+            else:
+                logger.info("Gesture confirmed (%s) but no webhook URL configured", event.gesture)
 
         cv2.putText(
             img, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 4, cv2.LINE_AA
@@ -174,6 +237,7 @@ def _render_status(container, ctx) -> None:
     while ctx.state.playing:
         hand_present, confidence = _live_status.snapshot()
         confirmed = _gesture_state.confirmed_gesture
+        webhook_url, last_gesture, last_result = _webhook_config.snapshot()
 
         with placeholder.container():
             st.success("Camera active")
@@ -187,6 +251,21 @@ def _render_status(container, ctx) -> None:
                 st.metric("Current Gesture", GESTURE_DISPLAY.get(confirmed, confirmed))
             else:
                 st.metric("Current Gesture", "—")
+
+            if not webhook_url.strip():
+                st.info("Webhook: not configured")
+            elif last_result is None:
+                st.info("Webhook: configured, no events sent yet")
+            elif last_result.success:
+                st.success(
+                    f"Last webhook: Success — {GESTURE_DISPLAY.get(last_gesture, last_gesture)} "
+                    f"(HTTP {last_result.status_code})"
+                )
+            else:
+                st.error(
+                    f"Last webhook: Failed — {GESTURE_DISPLAY.get(last_gesture, last_gesture)} "
+                    f"({last_result.error})"
+                )
 
         time.sleep(_STATUS_POLL_INTERVAL_SECONDS)
 
@@ -203,6 +282,25 @@ def main() -> None:
             "access on first run). The webcam feed will still work, but "
             "gestures cannot be detected until this is resolved."
         )
+
+    st.subheader("Webhook Configuration")
+    webhook_url = st.text_input(
+        "Webhook URL",
+        key="webhook_url_input",
+        placeholder="https://example.com/webhook",
+        help=(
+            "Called once per confirmed gesture with a JSON POST: "
+            '{"event": "gesture_detected", "gesture": "...", "timestamp": "..."}'
+        ),
+    )
+    _webhook_config.set_url(webhook_url)
+    if webhook_url:
+        validation_error = validate_webhook_url(webhook_url)
+        if validation_error:
+            st.error(validation_error)
+        else:
+            st.caption("✓ URL looks valid.")
+    st.divider()
 
     st.subheader("Supported Gestures")
     st.write(" | ".join(f"{g['emoji']} {g['label']}" for g in SUPPORTED_GESTURES))
